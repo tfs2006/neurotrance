@@ -16,10 +16,10 @@ const Visualizer: React.FC<VisualizerProps> = ({ analyser, isPlaying }) => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Set canvas size to match display size
+    // Set canvas size
     const resize = () => {
-        canvas.width = canvas.clientWidth;
-        canvas.height = canvas.clientHeight;
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
     };
     window.addEventListener('resize', resize);
     resize();
@@ -29,7 +29,6 @@ const Visualizer: React.FC<VisualizerProps> = ({ analyser, isPlaying }) => {
 
     const draw = () => {
       if (!isPlaying) {
-        // Gentle idle animation
         ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         animationRef.current = requestAnimationFrame(draw);
@@ -39,35 +38,61 @@ const Visualizer: React.FC<VisualizerProps> = ({ analyser, isPlaying }) => {
       animationRef.current = requestAnimationFrame(draw);
       analyser.getByteFrequencyData(dataArray);
 
-      // Trail effect
-      ctx.fillStyle = 'rgba(5, 5, 5, 0.2)';
+      // Clear with fade for trails
+      ctx.fillStyle = 'rgba(5, 5, 10, 0.15)';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      const barWidth = (canvas.width / bufferLength) * 2.5;
-      let barHeight;
-      let x = 0;
-
-      // Center line drawing
-      const cy = canvas.height / 2;
-
-      for (let i = 0; i < bufferLength; i++) {
-        barHeight = dataArray[i] / 1.5; // Scale down slightly
-
-        // Dynamic Color based on frequency
-        const r = barHeight + (25 * (i / bufferLength));
-        const g = 250 * (i / bufferLength);
-        const b = 255;
-
-        ctx.fillStyle = `rgb(${r},${g},${b})`;
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
+      const radius = Math.min(centerX, centerY) * 0.8;
+      
+      // Draw Circular Spectrum
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      
+      for (let i = 0; i < bufferLength; i += 4) { // Skip some bins for performance
+        const amplitude = dataArray[i];
+        const angle = (i / bufferLength) * Math.PI * 2;
         
-        // Draw mirrored spectrum
-        ctx.fillRect(x, cy - barHeight / 2, barWidth, barHeight);
-
-        x += barWidth + 1;
+        // Calculate bar height based on amplitude
+        const barHeight = (amplitude / 255) * (radius * 0.8);
         
-        // Optimize: don't draw high freqs that are empty usually
-        if (x > canvas.width) break;
+        // Inner point
+        const x1 = centerX + Math.cos(angle) * (radius * 0.2);
+        const y1 = centerY + Math.sin(angle) * (radius * 0.2);
+        
+        // Outer point
+        const x2 = centerX + Math.cos(angle) * (radius * 0.2 + barHeight);
+        const y2 = centerY + Math.sin(angle) * (radius * 0.2 + barHeight);
+        
+        // Color based on freq
+        const hue = (i / bufferLength) * 360 + (Date.now() / 50); // Cycle color
+        ctx.strokeStyle = `hsl(${hue}, 80%, 50%)`;
+        
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+
+        // Mirror for symmetry
+        const angle2 = angle + Math.PI;
+        const x3 = centerX + Math.cos(angle2) * (radius * 0.2);
+        const y3 = centerY + Math.sin(angle2) * (radius * 0.2);
+        const x4 = centerX + Math.cos(angle2) * (radius * 0.2 + barHeight);
+        const y4 = centerY + Math.sin(angle2) * (radius * 0.2 + barHeight);
+
+        ctx.beginPath();
+        ctx.moveTo(x3, y3);
+        ctx.lineTo(x4, y4);
+        ctx.stroke();
       }
+
+      // Central "Bass" Pulse
+      const bassAvg = dataArray.slice(0, 10).reduce((a, b) => a + b, 0) / 10;
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, (bassAvg / 255) * 50, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(0, 255, 255, ${bassAvg / 500})`;
+      ctx.fill();
     };
 
     draw();
@@ -81,7 +106,7 @@ const Visualizer: React.FC<VisualizerProps> = ({ analyser, isPlaying }) => {
   return (
     <canvas 
       ref={canvasRef} 
-      className="w-full h-full absolute top-0 left-0 z-0 opacity-60"
+      className="fixed top-0 left-0 w-full h-full z-0"
     />
   );
 };

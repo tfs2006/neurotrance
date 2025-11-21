@@ -4,7 +4,9 @@ import Visualizer from './components/Visualizer';
 import { ControlPanel } from './components/ControlPanel';
 import CodeLog from './components/CodeLog';
 import LegalModal from './components/LegalModal';
-import { Mood, ArpMode, LogEntry } from './types';
+import PatternDisplay from './components/PatternDisplay';
+import { Mood, ArpMode, LogEntry, DrumKit, MacroPhase, Pattern } from './types';
+import { BASE_TEMPO, SCALES, ROOT_NOTES } from './constants';
 
 const App: React.FC = () => {
   const engineRef = useRef<AudioEngine | null>(null);
@@ -13,22 +15,45 @@ const App: React.FC = () => {
   const [generationMeta, setGenerationMeta] = useState<string>("SYSTEM READY // WAITING FOR INPUT");
   const [phaseMeta, setPhaseMeta] = useState<string>("DRIFT");
   const [genCount, setGenCount] = useState<string>("0");
+  const [currentStep, setCurrentStep] = useState<number>(0);
+  const [activePattern, setActivePattern] = useState<Pattern | null>(null);
   
   // Audio State
   const [mood, setMood] = useState<Mood>(Mood.ETHEREAL);
   const [arpMode, setArpMode] = useState<ArpMode>(ArpMode.OFF);
+  const [drumKit, setDrumKit] = useState<DrumKit>(DrumKit.TRANCE);
   const [cutoff, setCutoff] = useState(0.3);
   const [resonance, setResonance] = useState(0.1);
+  const [tempo, setTempo] = useState(BASE_TEMPO);
+  const [volume, setVolume] = useState(0.6);
+  const [reverbEnabled, setReverbEnabled] = useState(true);
 
   // UI State
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [legalType, setLegalType] = useState<'privacy' | 'terms' | null>(null);
+  const [isZenMode, setIsZenMode] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+
+  // Parse URL params for shared sessions
+  useEffect(() => {
+      const params = new URLSearchParams(window.location.search);
+      const urlMood = params.get('mood');
+      const urlBpm = params.get('bpm');
+
+      if (urlMood && Object.values(Mood).includes(urlMood as Mood)) {
+          setMood(urlMood as Mood);
+      }
+      if (urlBpm) {
+          const bpm = parseFloat(urlBpm);
+          if (!isNaN(bpm)) setTempo(bpm);
+      }
+  }, []);
 
   // Initialize Engine (Lazy)
   useEffect(() => {
     engineRef.current = new AudioEngine();
     engineRef.current.setCallback((step, meta) => {
-        // Parse meta string "PEAK | GEN:5 | P:xy7z"
+        setCurrentStep(step);
         const parts = meta.split('|');
         if (parts.length >= 3) {
             setPhaseMeta(parts[0].trim());
@@ -41,6 +66,9 @@ const App: React.FC = () => {
     engineRef.current.setLogCallback((entry) => {
       setLogs(prev => [...prev.slice(-20), entry]);
     });
+    engineRef.current.setPatternCallback((pattern) => {
+        setActivePattern(pattern);
+    });
     return () => {
       if (engineRef.current) engineRef.current.stop();
     };
@@ -48,40 +76,91 @@ const App: React.FC = () => {
 
   // Sync State to Engine
   useEffect(() => {
-    if (engineRef.current) {
-      engineRef.current.updateParams(cutoff, resonance);
-    }
+    if (engineRef.current) engineRef.current.updateParams(cutoff, resonance);
   }, [cutoff, resonance]);
 
   useEffect(() => {
-    if (engineRef.current) {
-      engineRef.current.setMood(mood);
-    }
+    if (engineRef.current) engineRef.current.setMood(mood);
   }, [mood]);
 
   useEffect(() => {
-    if (engineRef.current) {
-      engineRef.current.setArpMode(arpMode);
-    }
+    if (engineRef.current) engineRef.current.setArpMode(arpMode);
   }, [arpMode]);
+
+  useEffect(() => {
+    if (engineRef.current) engineRef.current.setDrumKit(drumKit);
+  }, [drumKit]);
+
+  useEffect(() => {
+    if (engineRef.current) engineRef.current.setTempo(tempo);
+  }, [tempo]);
+
+  useEffect(() => {
+    if (engineRef.current) engineRef.current.setVolume(volume);
+  }, [volume]);
+
+  useEffect(() => {
+    if (engineRef.current) engineRef.current.setReverb(reverbEnabled);
+  }, [reverbEnabled]);
 
   const togglePlay = async () => {
     if (!engineRef.current) return;
 
     if (!isPlaying) {
       try {
+        // Initialize needs to happen inside a user gesture for modern browsers
         await engineRef.current.initialize();
         engineRef.current.start();
         setAnalyser(engineRef.current.getAnalyser());
         setIsPlaying(true);
       } catch (e) {
         console.error("Audio Init Failed", e);
-        setGenerationMeta("ERROR: AUDIO CONTEXT BLOCKED");
+        setGenerationMeta("ERROR: AUDIO CONTEXT BLOCKED - TRY AGAIN");
       }
     } else {
       engineRef.current.stop();
       setIsPlaying(false);
     }
+  };
+
+  const toggleRecording = async () => {
+      if (!engineRef.current) return;
+      if (!isRecording) {
+          engineRef.current.startRecording();
+          setIsRecording(true);
+      } else {
+          const blob = await engineRef.current.stopRecording();
+          setIsRecording(false);
+          // Download
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.style.display = 'none';
+          a.href = url;
+          a.download = `neurotrance_session_${Date.now()}.wav`;
+          document.body.appendChild(a);
+          a.click();
+          window.URL.revokeObjectURL(url);
+      }
+  };
+
+  const handleShare = () => {
+      // Ensure we use the full href path (excluding query params) to support GitHub Pages subdirectories
+      const baseUrl = window.location.href.split('?')[0];
+      const params = new URLSearchParams();
+      params.set('mood', mood);
+      params.set('bpm', tempo.toString());
+      
+      const url = `${baseUrl}?${params.toString()}`;
+      navigator.clipboard.writeText(url);
+      
+      // Simple visual feedback could be added here
+      const prevMeta = generationMeta;
+      setGenerationMeta("SESSION URL COPIED TO CLIPBOARD");
+      setTimeout(() => setGenerationMeta(prevMeta), 2000);
+  };
+
+  const handleForcePhase = (phase: MacroPhase) => {
+      if(engineRef.current) engineRef.current.forcePhase(phase);
   };
 
   return (
@@ -90,119 +169,187 @@ const App: React.FC = () => {
       <Visualizer analyser={analyser} isPlaying={isPlaying} />
 
       {/* Code Overlay (Left side background) */}
-      <div className="absolute top-0 left-0 w-full md:w-1/3 h-full pointer-events-none z-5 p-4 opacity-40">
-        <CodeLog logs={logs} />
-      </div>
+      {!isZenMode && (
+        <div className="absolute top-0 left-0 w-full md:w-1/3 h-full pointer-events-none z-5 p-4 opacity-40 hidden md:block">
+            <CodeLog logs={logs} />
+        </div>
+      )}
+
+      {/* Zen Mode Toggle */}
+      {isPlaying && (
+          <button 
+            onClick={() => setIsZenMode(!isZenMode)}
+            className="absolute top-4 right-4 z-50 text-gray-500 hover:text-white font-mono text-xs uppercase tracking-widest border border-transparent hover:border-white/20 p-2 rounded"
+          >
+              {isZenMode ? '[EXIT_ZEN]' : '[ZEN_MODE]'}
+          </button>
+      )}
 
       {/* Main UI Container */}
-      <div className="relative z-10 flex flex-col items-center gap-8 w-full max-w-5xl px-4 mb-16">
-        
-        {/* Header / Title */}
-        <div className="text-center space-y-2">
-          <h1 className="text-5xl md:text-7xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-white to-fuchsia-400 tracking-tighter drop-shadow-[0_0_15px_rgba(255,255,255,0.3)]">
-            NEURO<span className="text-cyan-400">TRANCE</span>
-          </h1>
-          <div className="flex justify-center gap-4 text-xs md:text-sm tracking-widest font-mono">
-            <span className="text-cyan-600">EVOLVING GENETIC ALGORITHM</span>
-            <span className="text-fuchsia-600">V.2.0.1</span>
-          </div>
-        </div>
-
-        {/* Start Button (Center Stage) */}
-        {!isPlaying && (
-          <button 
-            onClick={togglePlay}
-            className="group relative px-12 py-6 bg-transparent overflow-hidden rounded-full border border-cyan-500/50 hover:border-cyan-400 transition-all duration-500"
-          >
-            <div className="absolute inset-0 w-full h-full bg-cyan-500/10 group-hover:bg-cyan-500/20 transition-colors duration-500"></div>
-            <div className="absolute inset-0 w-0 bg-gradient-to-r from-transparent via-cyan-400/30 to-transparent group-hover:w-full transition-all duration-700 ease-out"></div>
-            <span className="relative text-cyan-100 font-mono text-xl tracking-widest group-hover:text-white">
-              INITIATE_SEQUENCE
-            </span>
-          </button>
-        )}
-
-        {/* Active Controls */}
-        {isPlaying && (
-          <div className="flex flex-col md:flex-row gap-8 items-start w-full justify-center animate-fade-in-up">
+      {!isZenMode && (
+        <div className="relative z-10 flex flex-col items-center gap-4 md:gap-8 w-full max-w-6xl px-4 h-full md:h-auto justify-center">
             
-            {/* Data Stream Panel (Left Stats) */}
-            <div className="hidden lg:block w-64 h-64 border-r-2 border-fuchsia-900/30 pr-4 pt-2 font-mono text-xs text-right select-none bg-black/20 backdrop-blur-sm">
-               <div className="mb-2 text-fuchsia-500">:: EVOLUTIONARY STATUS ::</div>
-               <div className="leading-relaxed text-fuchsia-100/80">
-                 <div className="mb-4">
-                   <span className="text-fuchsia-700 mr-2">PHASE</span>
-                   <span className="text-xl font-bold">{phaseMeta}</span>
-                 </div>
-                 <div className="mb-4">
-                    <span className="text-fuchsia-700 mr-2">GENERATION</span>
-                    <span className="text-xl font-bold">{genCount}</span>
-                 </div>
-                 <div className="mb-4">
-                    <span className="text-fuchsia-700 mr-2">PATTERN ID</span>
-                    <span className="text-lg">{generationMeta.replace('P:', '')}</span>
-                 </div>
-               </div>
+            {/* Header / Title */}
+            <div className="text-center space-y-2 mt-10 md:mt-0">
+            <h1 className="text-4xl md:text-7xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-white to-fuchsia-400 tracking-tighter drop-shadow-[0_0_15px_rgba(255,255,255,0.3)] select-none">
+                NEURO<span className="text-cyan-400">TRANCE</span>
+            </h1>
+            <div className="flex justify-center gap-4 text-[10px] md:text-sm tracking-widest font-mono">
+                <span className="text-cyan-600">GENETIC ALGORITHM V3.5</span>
+            </div>
             </div>
 
-            <ControlPanel 
-              currentMood={mood}
-              setMood={setMood}
-              currentArpMode={arpMode}
-              setArpMode={setArpMode}
-              cutoff={cutoff}
-              setCutoff={setCutoff}
-              resonance={resonance}
-              setResonance={setResonance}
-            />
-            
-            {/* Right filler for balance */}
-            <div className="hidden lg:block w-64 h-64 border-l-2 border-cyan-900/30 pl-4 pt-2 font-mono text-xs text-cyan-800/80 select-none bg-black/20 backdrop-blur-sm">
-               <div className="mb-2 text-cyan-500">:: RUNTIME_STATS ::</div>
-               <div className="leading-relaxed">
-                 <div>STATUS: ONLINE</div>
-                 <div>BPM: 138</div>
-                 <div>SAMPLE_RATE: 44.1kHz</div>
-                 <br/>
-                 {Array.from({ length: 5 }).map((_, i) => (
-                    <div key={i} className="opacity-50 overflow-hidden truncate">
-                      {Math.random().toString(16).substring(2, 14).toUpperCase()}
+            {/* Start Button (Center Stage) */}
+            {!isPlaying && (
+            <button 
+                onClick={togglePlay}
+                className="group relative px-12 py-6 bg-transparent overflow-hidden rounded-full border border-cyan-500/50 hover:border-cyan-400 transition-all duration-500 mt-8"
+            >
+                <div className="absolute inset-0 w-full h-full bg-cyan-500/10 group-hover:bg-cyan-500/20 transition-colors duration-500"></div>
+                <span className="relative text-cyan-100 font-mono text-xl tracking-widest group-hover:text-white">
+                INITIATE_SEQUENCE
+                </span>
+            </button>
+            )}
+
+            {/* Active Controls */}
+            {isPlaying && (
+            <div className="flex flex-col md:flex-row gap-8 items-start w-full justify-center animate-fade-in-up flex-1 md:flex-auto">
+                
+                {/* Data Stream Panel (Left Stats) */}
+                <div className="hidden lg:block w-64 h-64 border-r-2 border-fuchsia-900/30 pr-4 pt-2 font-mono text-xs text-right select-none bg-black/20 backdrop-blur-sm rounded-l-xl">
+                <div className="mb-2 text-fuchsia-500 border-b border-fuchsia-900/30 pb-1">:: EVOLUTIONARY STATUS ::</div>
+                <div className="leading-relaxed text-fuchsia-100/80 space-y-4">
+                    <div className="flex justify-between items-center">
+                        <span className="text-fuchsia-700">PHASE</span>
+                        <span className="text-xl font-bold animate-pulse">{phaseMeta}</span>
                     </div>
-                 ))}
-               </div>
-            </div>
-          </div>
-        )}
+                    <div className="flex justify-between items-center">
+                        <span className="text-fuchsia-700">GEN</span>
+                        <span className="text-xl font-bold">{genCount}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                        <span className="text-fuchsia-700">ID</span>
+                        <span className="text-sm font-mono text-cyan-300">{generationMeta.replace('P:', '').replace(/GEN:\d+/, '')}</span>
+                    </div>
+                    <div className="mt-4 border-t border-fuchsia-900/30 pt-2">
+                        <div className="text-[10px] text-fuchsia-500 mb-1">ACTIVE PATTERN VISUALIZATION</div>
+                        <PatternDisplay 
+                            pattern={activePattern} 
+                            currentStep={currentStep}
+                            scale={engineRef.current?.getCurrentScale() || SCALES.MINOR}
+                            rootNote={engineRef.current?.getRootNote() || 41}
+                        />
+                    </div>
+                </div>
+                </div>
 
-        {/* Stop Button (Small, bottom) */}
-        {isPlaying && (
-          <button 
-            onClick={togglePlay}
-            className="mt-8 text-xs font-mono text-red-900 hover:text-red-500 border border-red-900/30 px-4 py-1 rounded hover:border-red-500 transition-colors"
-          >
-            TERMINATE
-          </button>
-        )}
-      </div>
+                {/* Center Controls */}
+                <ControlPanel 
+                    currentMood={mood}
+                    setMood={setMood}
+                    currentArpMode={arpMode}
+                    setArpMode={setArpMode}
+                    currentDrumKit={drumKit}
+                    setDrumKit={setDrumKit}
+                    cutoff={cutoff}
+                    setCutoff={setCutoff}
+                    resonance={resonance}
+                    setResonance={setResonance}
+                    tempo={tempo}
+                    setTempo={setTempo}
+                    volume={volume}
+                    setVolume={setVolume}
+                    reverbEnabled={reverbEnabled}
+                    setReverbEnabled={setReverbEnabled}
+                    onForcePhase={handleForcePhase}
+                />
+                
+                {/* Right Controls Panel */}
+                <div className="hidden lg:flex w-64 h-64 border-l-2 border-cyan-900/30 pl-4 pt-2 flex-col justify-between font-mono text-xs text-cyan-800/80 select-none bg-black/20 backdrop-blur-sm rounded-r-xl">
+                    <div>
+                        <div className="mb-2 text-cyan-500 border-b border-cyan-900/30 pb-1">:: SESSION_TOOLS ::</div>
+                        <div className="space-y-2">
+                            <button 
+                                onClick={toggleRecording}
+                                className={`w-full border py-2 px-3 rounded flex items-center justify-between transition-all ${
+                                    isRecording 
+                                    ? 'border-red-500 bg-red-900/20 text-red-100 animate-pulse' 
+                                    : 'border-cyan-900/50 hover:border-cyan-400 text-cyan-500 hover:text-cyan-100'
+                                }`}
+                            >
+                                <span>{isRecording ? 'RECORDING...' : 'REC AUDIO .WAV'}</span>
+                                <div className={`w-2 h-2 rounded-full ${isRecording ? 'bg-red-500' : 'bg-gray-600'}`} />
+                            </button>
+
+                            <button 
+                                onClick={handleShare}
+                                className="w-full border border-cyan-900/50 hover:border-cyan-400 text-cyan-500 hover:text-cyan-100 py-2 px-3 rounded transition-colors text-left"
+                            >
+                                SHARE PRESET
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div className="lg:hidden block">
+                         {/* Mobile Pattern Display backup if needed */}
+                    </div>
+                    
+                    <button 
+                        onClick={togglePlay}
+                        className="w-full text-red-900 hover:text-red-500 border border-red-900/30 py-2 rounded hover:border-red-500 transition-colors"
+                    >
+                        TERMINATE
+                    </button>
+                </div>
+            </div>
+            )}
+            
+            {/* Mobile Pattern Display (Visible only on small screens when playing) */}
+            {isPlaying && (
+                <div className="lg:hidden w-full mt-4">
+                    <PatternDisplay 
+                        pattern={activePattern} 
+                        currentStep={currentStep}
+                        scale={engineRef.current?.getCurrentScale() || SCALES.MINOR}
+                        rootNote={engineRef.current?.getRootNote() || 41}
+                    />
+                </div>
+            )}
+        </div>
+      )}
 
       {/* Footer & Legal */}
-      <div className="absolute bottom-0 left-0 right-0 w-full z-20 flex flex-col items-center gap-2 pb-4 bg-gradient-to-t from-black via-black/80 to-transparent pt-8 pointer-events-auto">
-        
-        {/* Status Line */}
-        <div className="text-[10px] text-cyan-900/60 font-mono tracking-widest pointer-events-none mb-1">
-           NEUROTRANCE_ENGINE // GEN_{genCount} // {phaseMeta}
+      {!isZenMode && (
+        <div className="absolute bottom-0 left-0 right-0 w-full z-20 flex flex-col items-center gap-2 pb-4 bg-gradient-to-t from-black via-black/80 to-transparent pt-12 pointer-events-auto">
+            {isPlaying && (
+                <div className="md:hidden flex gap-4 mb-4">
+                    <button 
+                        onClick={toggleRecording}
+                        className={`w-12 h-12 rounded-full border flex items-center justify-center ${
+                            isRecording ? 'border-red-500 bg-red-900/20' : 'border-gray-700 bg-gray-900'
+                        }`}
+                    >
+                        <div className={`w-4 h-4 rounded-full ${isRecording ? 'bg-red-500' : 'bg-gray-500'}`} />
+                    </button>
+                    <button 
+                        onClick={togglePlay}
+                        className="w-12 h-12 rounded-full border border-red-900/50 bg-red-900/10 flex items-center justify-center text-red-500 text-xs font-bold"
+                    >
+                        STOP
+                    </button>
+                </div>
+            )}
+            <div className="flex gap-4 md:gap-6 text-[10px] text-cyan-700 font-mono uppercase tracking-wider items-center">
+            <span className="opacity-70">&copy; {new Date().getFullYear()} NeuroTrance</span>
+            <span className="text-cyan-900">|</span>
+            <button onClick={() => setLegalType('privacy')} className="hover:text-cyan-400 transition-colors">Privacy</button>
+            <button onClick={() => setLegalType('terms')} className="hover:text-cyan-400 transition-colors">Terms</button>
+            <span className="text-cyan-900">|</span>
+            <a href="mailto:neurotrance@4ourmedia.com" className="hover:text-cyan-400 transition-colors">Contact</a>
+            </div>
         </div>
-
-        {/* Links */}
-        <div className="flex gap-4 md:gap-6 text-[10px] text-cyan-700 font-mono uppercase tracking-wider items-center">
-          <span className="opacity-70">&copy; {new Date().getFullYear()} NeuroTrance</span>
-          <span className="text-cyan-900">|</span>
-          <button onClick={() => setLegalType('privacy')} className="hover:text-cyan-400 transition-colors">Privacy</button>
-          <button onClick={() => setLegalType('terms')} className="hover:text-cyan-400 transition-colors">Terms</button>
-          <span className="text-cyan-900">|</span>
-          <a href="mailto:neurotrance@4ourmedia.com" className="hover:text-cyan-400 transition-colors">Contact</a>
-        </div>
-      </div>
+      )}
 
       {/* Legal Modal Overlay */}
       <LegalModal 

@@ -21,6 +21,13 @@ export enum MacroPhase {
   COMEDOWN = 'COMEDOWN',
 }
 
+export enum DrumKit {
+  TRANCE = 'TRANCE',
+  ANALOG_808 = '808',
+  VINTAGE_909 = '909',
+  ACOUSTIC = 'ACOUSTIC',
+}
+
 export interface AudioState {
   isPlaying: boolean;
   tempo: number; // BPM
@@ -35,6 +42,7 @@ export interface Pattern {
   id: string;
   steps: (number | null)[]; // MIDI offsets from root, or null for rest
   velocity: number[]; // 0-1
+  offsets?: number[]; // -0.5 to 0.5 representing percentage of a 16th note shift
   generation: number;
   parent?: string;
 }
@@ -54,3 +62,21 @@ export interface LogEntry {
 }
 
 export type Scale = number[];
+
+// --- NEW ADVANCED TYPES ---
+
+export interface SynthPatch {
+  waveform: OscillatorType;
+  attack: number;
+  decay: number;
+  sustain: number;
+  release: number;
+  detuneAmount: number;
+  fmDepth: number;
+  filterType: BiquadFilterType;
+}
+
+export interface ChordProgression {
+  rootOffsets: number[]; // e.g., [0, -2, 5, 7] relative to key center
+  barLength: number; // How many bars per chord
+}
