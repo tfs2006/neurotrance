@@ -1,0 +1,5 @@
+{
+  "name": "NeuroTrance Generator",
+  "description": "A browser-based generative audio engine that composes infinite, evolving trance music in real-time using the Web Audio API. No samples, no AI—just pure algorithmic synthesis.",
+  "requestFramePermissions": []
+}
