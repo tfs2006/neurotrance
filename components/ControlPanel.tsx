@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Mood, ArpMode, DrumKit, MacroPhase, SynthesisType, SynthPatch, EvolutionLocks } from '../types';
+import { Mood, ArpMode, DrumKit, MacroPhase, SynthesisType, SynthPatch, EvolutionLocks, BioStats } from '../types';
 
 interface ControlPanelProps {
   currentMood: Mood;
@@ -29,13 +29,14 @@ interface ControlPanelProps {
   setLocks: (l: EvolutionLocks) => void;
   onManualMutate: (target: 'melody' | 'timbre' | 'rhythm') => void;
   onParamChange: (key: keyof SynthPatch, value: any) => void;
+  bioStats: BioStats;
 }
 
 export const ControlPanel: React.FC<ControlPanelProps> = ({
   currentMood, setMood, currentArpMode, setArpMode, currentDrumKit, setDrumKit,
   cutoff, setCutoff, resonance, setResonance, tempo, setTempo, volume, setVolume,
   reverbEnabled, setReverbEnabled, onForcePhase, onSetSynthesisType, onSetFMRatio,
-  currentPatch, isAutoEvolve, setIsAutoEvolve, locks, setLocks, onManualMutate, onParamChange
+  currentPatch, isAutoEvolve, setIsAutoEvolve, locks, setLocks, onManualMutate, onParamChange, bioStats
 }) => {
   const xyRef = useRef<HTMLDivElement>(null);
   const [isDraggingXY, setIsDraggingXY] = useState(false);
@@ -69,6 +70,25 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
 
   const EvolutionControls = () => (
       <div className="space-y-4">
+          {/* Bio Stats */}
+          <div className="p-2 bg-black/40 rounded border border-gray-800 text-[9px] font-mono space-y-1">
+              <div className="flex justify-between text-cyan-300">
+                  <span>POPULATION</span>
+                  <span>{bioStats.population}</span>
+              </div>
+              <div className="flex justify-between text-fuchsia-300">
+                  <span>SYNERGY</span>
+                  <span>{(bioStats.synergy * 100).toFixed(0)}%</span>
+              </div>
+              <div className="flex justify-between text-yellow-300">
+                  <span>ENERGY</span>
+                  <span>{bioStats.averageEnergy.toFixed(0)}</span>
+              </div>
+              <div className="text-center pt-1 text-gray-500 tracking-widest">
+                  AGE: {bioStats.dominantType}
+              </div>
+          </div>
+
           {/* Master Switch */}
           <div className="flex items-center justify-between p-3 border border-cyan-500/30 bg-cyan-900/20 rounded">
               <span className="text-xs font-bold text-cyan-300">EVOLUTION ENGINE</span>
@@ -266,7 +286,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                 <div className="w-12 h-1 bg-cyan-700/50 rounded-full" />
             </div>
             <div className="flex border-b border-cyan-900/50">
-                {[ { id: 'evo', label: 'EVOLUTION' }, { id: 'patch', label: 'PATCH' }, { id: 'mix', label: 'MIX' } ].map(tab => (
+                {[ { id: 'evo', label: 'CIVILIZATION' }, { id: 'patch', label: 'PATCH' }, { id: 'mix', label: 'MIX' } ].map(tab => (
                     <button key={tab.id} onClick={() => { setActiveTab(tab.id as any); setIsMobileOpen(true); }} className={`flex-1 py-3 text-xs font-bold tracking-wider transition-colors ${activeTab === tab.id ? 'text-cyan-400 bg-cyan-900/20 border-b-2 border-cyan-400' : 'text-gray-500 hover:text-cyan-200'}`}>
                         {tab.label}
                     </button>

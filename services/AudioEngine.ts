@@ -1,11 +1,12 @@
 import { SCALES, midiToFreq, midiToNoteName, ROOT_NOTES, BASE_TEMPO, SCHEDULE_AHEAD_TIME, LOOKAHEAD } from '../constants';
-import { Mood, ArpMode, LogEntry, Pattern, MacroPhase, DrumKit, SynthPatch, ChordProgression, SynthesisType, EvolutionLocks } from '../types';
+import { Mood, ArpMode, LogEntry, Pattern, MacroPhase, DrumKit, SynthPatch, ChordProgression, SynthesisType, EvolutionLocks, BioStats } from '../types';
 
 export class AudioEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
   private analyser: AnalyserNode | null = null;
   private compressor: DynamicsCompressorNode | null = null;
+  private saturator: WaveShaperNode | null = null; 
   private destNode: MediaStreamAudioDestinationNode | null = null;
   private mediaRecorder: MediaRecorder | null = null;
   private audioChunks: Blob[] = [];
@@ -21,6 +22,11 @@ export class AudioEngine {
   private lfo1Gain: GainNode | null = null;
   private lfo2: OscillatorNode | null = null; // Tempo Synced Pulse
   private lfo2Gain: GainNode | null = null;
+
+  // THE GHOST IN THE MACHINE (Chaos Engine)
+  private chaos = { x: 0.1, y: 0, z: 0 };
+  private chaosParams = { sigma: 10, rho: 28, beta: 8/3, dt: 0.008 };
+  private currentChaosVal: number = 0; 
 
   // Scheduling
   private nextNoteTime: number = 0;
@@ -58,7 +64,7 @@ export class AudioEngine {
   private currentPattern: Pattern | null = null;
   private counterPattern: Pattern | null = null;
   private patternHistory: Pattern[] = [];
-  private elitePatterns: Pattern[] = []; // "Hall of Fame" for learning
+  private elitePatterns: Pattern[] = []; 
   private currentGeneration: number = 0;
   private macroPhase: MacroPhase = MacroPhase.DRIFT;
   private phaseTimer: number = 0; 
@@ -78,19 +84,19 @@ export class AudioEngine {
   };
 
   private currentProgression: ChordProgression = {
-    rootOffsets: [0, 0, 0, 0], // Static start
+    rootOffsets: [0, 0, 0, 0], 
     barLength: 4
   };
   
   private currentChordIndex: number = 0;
-  private currentChordRoot: number = 0; // Actual MIDI note
+  private currentChordRoot: number = 0; 
 
   // Euclidean Rhythm State
   private hiHatPattern: boolean[] = [];
   private percussionPattern: boolean[] = [];
 
   // Callbacks
-  private onSchedulerTick: ((step: number, meta: string) => void) | null = null;
+  private onSchedulerTick: ((step: number, meta: string, chaos: number) => void) | null = null;
   private onLog: ((entry: LogEntry) => void) | null = null;
   private onPatternUpdate: ((pattern: Pattern) => void) | null = null;
   private onPatchUpdate: ((patch: SynthPatch) => void) | null = null;
@@ -134,6 +140,10 @@ export class AudioEngine {
     this.compressor.attack.value = 0.003;
     this.compressor.release.value = 0.25;
 
+    this.saturator = this.ctx.createWaveShaper();
+    this.saturator.curve = this.makeDistortionCurve(50); 
+    this.saturator.oversample = '2x';
+
     this.destNode = this.ctx.createMediaStreamDestination();
 
     // Effects Bus
@@ -150,7 +160,7 @@ export class AudioEngine {
     delayFilter.connect(this.delayNode);
 
     this.reverbNode = this.ctx.createConvolver();
-    this.reverbNode.buffer = this.createReverbImpulse(2.5); 
+    this.reverbNode.buffer = this.createReverbImpulse(3.0); 
     this.reverbGain = this.ctx.createGain();
     this.reverbGain.gain.value = 1;
 
@@ -171,7 +181,8 @@ export class AudioEngine {
     this.lfo2.start();
 
     // Routing
-    this.masterGain.connect(this.compressor);
+    this.masterGain.connect(this.saturator);
+    this.saturator.connect(this.compressor);
     this.compressor.connect(this.analyser);
     this.analyser.connect(this.ctx.destination);
     this.compressor.connect(this.destNode);
@@ -180,12 +191,80 @@ export class AudioEngine {
     this.reverbNode.connect(this.reverbGain);
     this.reverbGain.connect(this.masterGain);
 
-    this.log('info', 'DSP Chain Constructed');
+    this.log('info', 'DSP Chain: Saturation -> Comp -> Chaos Engine Online');
 
-    // Initialize
-    this.regenerateSongStructure(true); // force
-    this.evolvePattern(true); // force
+    this.regenerateSongStructure(true); 
+    this.evolvePattern(true); 
     this.setMood(this.currentMood);
+  }
+
+  // --- BIO-FEEDBACK SYSTEM (The Interface to LifeEngine) ---
+  public injectBioFeedback(stats: BioStats) {
+      if (!this.isAutoEvolve) return;
+
+      // 1. Civilization Energy drives Tempo & Cutoff (Breath of Life)
+      const energyFactor = stats.averageEnergy / 100; // 0-1
+      
+      // Subtle tempo drift based on energy
+      const targetTempo = BASE_TEMPO + (energyFactor * 10) - 5;
+      if (this.ctx && Math.abs(this.tempo - targetTempo) > 1) {
+          // Smoothly drift tempo
+          this.setTempo(this.tempo + (targetTempo - this.tempo) * 0.01);
+      }
+
+      // Filter opens up as civilization flourishes
+      if (!this.locks.timbre) {
+          const targetCutoff = 0.2 + (energyFactor * 0.6); // 20% to 80% open
+          // Lerp towards target
+          this.filterCutoff = this.filterCutoff + (targetCutoff - this.filterCutoff) * 0.05;
+      }
+
+      // 2. Population drives Rhythmic Complexity
+      if (!this.locks.rhythm) {
+          // High population = complex rhythms
+          if (stats.population > 80 && this.macroPhase !== MacroPhase.PEAK) {
+              // Trigger evolution to accommodate the masses
+              this.generateEuclideanRhythms(); 
+          }
+      }
+
+      // 3. Synergy drives Harmony & Mood
+      if (!this.locks.harmony && Math.random() < 0.01) {
+          // If highly connected, prefer harmonious moods
+          if (stats.synergy > 0.5 && this.currentMood === Mood.DARK) {
+              this.setMood(Mood.EUPHORIC);
+          } else if (stats.synergy < 0.2 && this.currentMood === Mood.EUPHORIC) {
+              // Disconnected society feels darker
+              this.setMood(Mood.DARK);
+          }
+      }
+
+      // 4. Dominant Type drives Sound Design
+      if (!this.locks.timbre && Math.random() < 0.05) {
+          if (stats.dominantType === 'THINKER' && this.currentPatch.type !== 'FM') {
+              this.setSynthesisType('FM'); // Thinkers like complex FM
+          } else if (stats.dominantType === 'BUILDER' && this.currentPatch.waveform !== 'square') {
+              this.setPatchParam('waveform', 'square'); // Builders like structure
+          } else if (stats.dominantType === 'FEELER' && this.currentPatch.type !== 'SUBTRACTIVE') {
+              this.setSynthesisType('SUBTRACTIVE'); // Feelers like warmth
+          }
+      }
+  }
+
+  // --- CHAOS ENGINE ---
+  private updateChaos() {
+      const { x, y, z } = this.chaos;
+      const { sigma, rho, beta, dt } = this.chaosParams;
+      
+      const dx = sigma * (y - x) * dt;
+      const dy = (x * (rho - z) - y) * dt;
+      const dz = (x * y - beta * z) * dt;
+      
+      this.chaos.x += dx;
+      this.chaos.y += dy;
+      this.chaos.z += dz;
+      
+      this.currentChaosVal = Math.max(0, Math.min(1, (this.chaos.x + 25) / 50));
   }
 
   // --- MANUAL CONTROLS ---
@@ -322,7 +401,7 @@ export class AudioEngine {
       scaler.connect(targetParam);
   }
 
-  public setCallback(cb: (step: number, meta: string) => void) { this.onSchedulerTick = cb; }
+  public setCallback(cb: (step: number, meta: string, chaos: number) => void) { this.onSchedulerTick = cb; }
   public setLogCallback(cb: (entry: LogEntry) => void) { this.onLog = cb; }
   public setPatternCallback(cb: (pattern: Pattern) => void) { this.onPatternUpdate = cb; }
   public setPatchCallback(cb: (patch: SynthPatch) => void) { this.onPatchUpdate = cb; }
@@ -597,7 +676,10 @@ export class AudioEngine {
       this.scheduleNote(this.current16thNote, this.nextNoteTime);
       this.nextNote();
     }
-    if (this.isPlaying) this.timerID = window.setTimeout(() => this.scheduler(), LOOKAHEAD);
+    if (this.isPlaying) {
+        this.updateChaos(); // Tick the Chaos Engine
+        this.timerID = window.setTimeout(() => this.scheduler(), LOOKAHEAD);
+    }
   }
 
   private nextNote() {
@@ -635,7 +717,7 @@ export class AudioEngine {
       }
 
       const meta = `${this.macroPhase} | GEN:${this.currentGeneration} | P:${this.currentPattern?.id}`;
-      if (this.onSchedulerTick) this.onSchedulerTick(this.current16thNote, meta);
+      if (this.onSchedulerTick) this.onSchedulerTick(this.current16thNote, meta, this.currentChaosVal);
   }
 
   private transitionPhase() {
@@ -827,6 +909,11 @@ export class AudioEngine {
     const filter = this.ctx.createBiquadFilter();
     filter.type = 'lowpass';
     filter.Q.value = this.resonance * 2; 
+    
+    // Apply CHAOS to Filter Cutoff for that "Neuro" drift
+    // Map chaosVal (0-1) to -50 to +50 Hz offset
+    const chaosOffset = (this.currentChaosVal - 0.5) * 100;
+    
     let envAmt = this.filterCutoff * 2;
     let decay = 0.2;
 
@@ -838,9 +925,9 @@ export class AudioEngine {
     if (subStep === 2) velocity = 0.5; 
     else if (subStep === 3) { velocity = 0.35; envAmt *= 0.8; }
     
-    filter.frequency.setValueAtTime(100, time); 
-    filter.frequency.linearRampToValueAtTime(100 + envAmt, time + 0.02);
-    filter.frequency.exponentialRampToValueAtTime(100, time + decay);
+    filter.frequency.setValueAtTime(100 + chaosOffset, time); 
+    filter.frequency.linearRampToValueAtTime(100 + envAmt + chaosOffset, time + 0.02);
+    filter.frequency.exponentialRampToValueAtTime(100 + chaosOffset, time + decay);
 
     const gain = this.ctx.createGain();
     gain.gain.setValueAtTime(0, time);
@@ -854,14 +941,12 @@ export class AudioEngine {
   private playPad(time: number) {
       if (!this.ctx || this.macroPhase === MacroPhase.PEAK) return; 
 
-      // If FM is active, use FM Pad
       if (this.currentPatch.type === 'FM') {
           this.playFMPad(time);
           return;
       }
 
-      // SUBTRACTIVE PAD
-      const degrees = [0, 2, 4, 1]; // Pentatonic indices
+      const degrees = [0, 2, 4, 1]; 
       const oscs: OscillatorNode[] = [];
       const gain = this.ctx.createGain();
       const attack = 2.0;
@@ -876,7 +961,7 @@ export class AudioEngine {
 
       const filter = this.ctx.createBiquadFilter();
       filter.type = 'lowpass';
-      filter.frequency.value = 600;
+      filter.frequency.value = 600 + (this.currentChaosVal * 200); // Chaos modulation
       filter.Q.value = 0.5;
       this.connectModMatrix(filter.frequency, 'LFO1', 200);
 
@@ -900,7 +985,7 @@ export class AudioEngine {
 
   private playFMPad(time: number) {
       if (!this.ctx) return;
-      const degrees = [0, 2, 4]; // Fewer notes for FM clarity
+      const degrees = [0, 2, 4]; 
       const gain = this.ctx.createGain();
       const attack = 1.5;
       const duration = (60 / this.tempo) * 4 * 4;
@@ -925,7 +1010,6 @@ export class AudioEngine {
           modulator.frequency.value = freq * (this.currentPatch.harmonicRatio || 1);
           
           const modGain = this.ctx!.createGain();
-          // Slow FM index evolution
           modGain.gain.setValueAtTime(100, time);
           modGain.gain.linearRampToValueAtTime(this.currentPatch.fmDepth * 0.5, time + attack);
           modGain.gain.linearRampToValueAtTime(100, time + duration);
@@ -948,7 +1032,6 @@ export class AudioEngine {
       const vel = this.counterPattern.velocity[step];
       if (noteOffset === null || vel === 0) return;
 
-      // Pluck is always basic FM for contrast
       const carrier = this.ctx.createOscillator();
       const modulator = this.ctx.createOscillator();
       const modGain = this.ctx.createGain();
@@ -1007,18 +1090,16 @@ export class AudioEngine {
       gain.connect(this.masterGain!); gain.connect(this.delayNode!);
 
       if (this.currentPatch.type === 'FM') {
-          // FM SYNTHESIS
           const carrier = this.ctx.createOscillator();
-          carrier.type = 'sine'; // FM usually cleaner with sine carrier
+          carrier.type = 'sine'; 
           carrier.frequency.value = freq;
           
           const modulator = this.ctx.createOscillator();
-          modulator.type = 'sine'; // Can be varied but sticking to sine/tri for now
+          modulator.type = 'sine'; 
           modulator.frequency.value = freq * (this.currentPatch.harmonicRatio || 2);
           
           const modGain = this.ctx.createGain();
           
-          // FM Envelope (Critical for "pluck" sound)
           const fmAmt = this.currentPatch.fmDepth;
           modGain.gain.setValueAtTime(fmAmt, actualTime);
           modGain.gain.exponentialRampToValueAtTime(1, actualTime + this.currentPatch.decay);
@@ -1031,7 +1112,6 @@ export class AudioEngine {
           modulator.start(actualTime); modulator.stop(actualTime + 0.4);
       
       } else {
-          // SUBTRACTIVE SYNTHESIS
           const osc1 = this.ctx.createOscillator();
           const osc2 = this.ctx.createOscillator();
           
@@ -1040,7 +1120,7 @@ export class AudioEngine {
 
           osc1.frequency.setValueAtTime(freq, actualTime);
           osc2.frequency.setValueAtTime(freq + 2, actualTime); 
-          osc2.detune.value = this.currentPatch.detuneAmount;
+          osc2.detune.value = this.currentPatch.detuneAmount + (this.currentChaosVal * 5); // Chaos detune
 
           const filter = this.ctx.createBiquadFilter();
           filter.type = this.currentPatch.filterType;
@@ -1100,8 +1180,12 @@ export class AudioEngine {
       gain.gain.setValueAtTime(0, time);
       gain.gain.linearRampToValueAtTime(0.1, time + 0.01);
       gain.gain.exponentialRampToValueAtTime(0.001, time + 0.2);
+      
+      // Chaos Modulated Panning
       const panner = this.ctx.createStereoPanner();
-      this.connectModMatrix(panner.pan, 'LFO2', 0.8); 
+      // Map ChaosVal (0-1) to (-1 to 1)
+      panner.pan.setValueAtTime((this.currentChaosVal * 2) - 1, time);
+      
       osc.connect(filter); filter.connect(gain); gain.connect(panner); panner.connect(this.masterGain!); panner.connect(this.delayNode!);
       osc.start(time); osc.stop(time + 0.25);
   }
@@ -1135,9 +1219,23 @@ export class AudioEngine {
     const right = impulse.getChannelData(1);
     for (let i = 0; i < length; i++) {
       const n = length - i;
-      left[i] = (Math.random() * 2 - 1) * Math.pow(n / length, 2);
-      right[i] = (Math.random() * 2 - 1) * Math.pow(n / length, 2);
+      const decay = Math.pow(1 - n / length, 2);
+      left[i] = (Math.random() * 2 - 1) * decay;
+      right[i] = (Math.random() * 2 - 1) * decay;
     }
     return impulse;
+  }
+
+  // WaveShaper Curve for Saturation
+  private makeDistortionCurve(amount: number) {
+    const k = typeof amount === 'number' ? amount : 50;
+    const n_samples = 44100;
+    const curve = new Float32Array(n_samples);
+    const deg = Math.PI / 180;
+    for (let i = 0; i < n_samples; ++i) {
+      const x = (i * 2) / n_samples - 1;
+      curve[i] = ((3 + k) * x * 20 * deg) / (Math.PI + k * Math.abs(x));
+    }
+    return curve;
   }
 }

@@ -1,15 +1,20 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AudioEngine } from './services/AudioEngine';
+import { LifeEngine } from './services/LifeEngine';
 import Visualizer from './components/Visualizer';
 import { ControlPanel } from './components/ControlPanel';
 import CodeLog from './components/CodeLog';
 import LegalModal from './components/LegalModal';
 import PatternDisplay from './components/PatternDisplay';
-import { Mood, ArpMode, LogEntry, DrumKit, MacroPhase, Pattern, SynthesisType, EvolutionLocks, SynthPatch } from './types';
+import { Mood, ArpMode, LogEntry, DrumKit, MacroPhase, Pattern, SynthesisType, EvolutionLocks, SynthPatch, BioStats } from './types';
 import { BASE_TEMPO, SCALES } from './constants';
 
 const App: React.FC = () => {
   const engineRef = useRef<AudioEngine | null>(null);
+  // Initialize LifeEngine ref lazily or just once. 
+  // useRef(new LifeEngine()) creates garbage on every render, but it's safe logic-wise.
+  const lifeEngineRef = useRef<LifeEngine>(new LifeEngine());
+  
   const [isPlaying, setIsPlaying] = useState(false);
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
   const [generationMeta, setGenerationMeta] = useState<string>("SYSTEM READY // WAITING FOR INPUT");
@@ -17,7 +22,11 @@ const App: React.FC = () => {
   const [genCount, setGenCount] = useState<string>("0");
   const [currentStep, setCurrentStep] = useState<number>(0);
   const [activePattern, setActivePattern] = useState<Pattern | null>(null);
+  const [chaosValue, setChaosValue] = useState<number>(0);
   
+  // Bio Stats
+  const [bioStats, setBioStats] = useState<BioStats>({ population: 0, averageEnergy: 0, dominantType: 'BUILDER', synergy: 0 });
+
   // Audio State
   const [mood, setMood] = useState<Mood>(Mood.ETHEREAL);
   const [arpMode, setArpMode] = useState<ArpMode>(ArpMode.OFF);
@@ -53,11 +62,13 @@ const App: React.FC = () => {
       if (urlBpm) { const bpm = parseFloat(urlBpm); if (!isNaN(bpm)) setTempo(bpm); }
   }, []);
 
-  // Initialize Engine
+  // Initialize Engine (Run Once)
   useEffect(() => {
     engineRef.current = new AudioEngine();
-    engineRef.current.setCallback((step, meta) => {
+    
+    engineRef.current.setCallback((step, meta, chaos) => {
         setCurrentStep(step);
+        setChaosValue(chaos);
         const parts = meta.split('|');
         if (parts.length >= 3) {
             setPhaseMeta(parts[0].trim());
@@ -65,12 +76,35 @@ const App: React.FC = () => {
             setGenerationMeta(parts[2].trim());
         } else { setGenerationMeta(meta); }
     });
-    engineRef.current.setLogCallback((entry) => setLogs(prev => [...prev.slice(-20), entry]));
-    engineRef.current.setPatternCallback((pattern) => setActivePattern({...pattern})); // Spread to force re-render
-    engineRef.current.setPatchCallback((patch) => setCurrentPatch({...patch})); // Sync UI with Engine
 
-    return () => { if (engineRef.current) engineRef.current.stop(); };
+    engineRef.current.setLogCallback((entry) => setLogs(prev => [...prev.slice(-20), entry]));
+    engineRef.current.setPatternCallback((pattern) => setActivePattern({...pattern})); 
+    engineRef.current.setPatchCallback((patch) => setCurrentPatch({...patch})); 
+
+    // Cleanup on unmount
+    return () => { 
+        if (engineRef.current) engineRef.current.stop(); 
+    };
   }, []);
+
+  // Bio-Feedback Loop (Dependent on isPlaying)
+  useEffect(() => {
+    let bioLoop: number;
+
+    if (isPlaying) {
+        bioLoop = window.setInterval(() => {
+            if (lifeEngineRef.current && engineRef.current) {
+                const stats = lifeEngineRef.current.update();
+                setBioStats(stats);
+                engineRef.current.injectBioFeedback(stats);
+            }
+        }, 100); // Update logic 10 times a second
+    }
+
+    return () => {
+        if (bioLoop) clearInterval(bioLoop);
+    };
+  }, [isPlaying]);
 
   // Sync State to Engine
   useEffect(() => { if (engineRef.current) engineRef.current.updateParams(cutoff, resonance); }, [cutoff, resonance]);
@@ -105,22 +139,25 @@ const App: React.FC = () => {
   const handleStepClick = (index: number) => {
       if (engineRef.current) {
           engineRef.current.togglePatternStep(index);
-          // Force update UI locks if auto mode was on
           if (isAutoEvolve) setLocks(prev => ({ ...prev, melody: true }));
       }
   };
 
   const togglePlay = async () => {
     if (!engineRef.current) return;
+    
     if (!isPlaying) {
       try {
         await engineRef.current.initialize();
         engineRef.current.start();
         setAnalyser(engineRef.current.getAnalyser());
         setIsPlaying(true);
-        // Grab initial patch state
+        // Sync initial patch state to UI
         setCurrentPatch(engineRef.current.getCurrentPatch());
-      } catch (e) { console.error("Audio Init Failed", e); setGenerationMeta("ERROR: AUDIO CONTEXT BLOCKED - TRY AGAIN"); }
+      } catch (e) { 
+          console.error("Audio Init Failed", e); 
+          setGenerationMeta("ERROR: AUDIO CONTEXT BLOCKED - CLICK TO RETRY"); 
+      }
     } else {
       engineRef.current.stop();
       setIsPlaying(false);
@@ -155,7 +192,7 @@ const App: React.FC = () => {
 
   return (
     <div className="relative w-full h-screen bg-black flex flex-col items-center justify-center overflow-hidden font-sans">
-      <Visualizer analyser={analyser} isPlaying={isPlaying} />
+      <Visualizer analyser={analyser} isPlaying={isPlaying} lifeEngine={lifeEngineRef.current} />
 
       {!isZenMode && (
         <div className="absolute top-0 left-0 w-full md:w-1/3 h-full pointer-events-none z-5 p-4 opacity-40 hidden md:block">
@@ -183,6 +220,7 @@ const App: React.FC = () => {
                 <span className={isAutoEvolve ? "text-cyan-400 animate-pulse" : "text-gray-600"}>
                     {isAutoEvolve ? "AI_ARCHITECT_ONLINE" : "MANUAL_OVERRIDE_ACTIVE"}
                 </span>
+                <span className="text-red-500/70">CHAOS: {(chaosValue * 100).toFixed(0)}%</span>
             </div>
             </div>
 
@@ -244,6 +282,7 @@ const App: React.FC = () => {
                     setLocks={setLocks}
                     onManualMutate={handleManualMutate}
                     onParamChange={handlePatchParamChange}
+                    bioStats={bioStats}
                 />
                 
                 <div className="hidden lg:flex w-64 h-64 border-l-2 border-cyan-900/30 pl-4 pt-2 flex-col justify-between font-mono text-xs text-cyan-800/80 select-none bg-black/20 backdrop-blur-sm rounded-r-xl">

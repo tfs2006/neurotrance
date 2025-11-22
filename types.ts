@@ -30,22 +30,23 @@ export enum DrumKit {
 
 export interface AudioState {
   isPlaying: boolean;
-  tempo: number; // BPM
-  filterCutoff: number; // 0 to 1 normalized
-  resonance: number; // 0 to 1 normalized
+  tempo: number; 
+  filterCutoff: number; 
+  resonance: number; 
   mood: Mood;
-  generationString: string; // A visual representation of the current 'seed'
+  generationString: string; 
   timeElapsed: number;
+  chaos: number; 
 }
 
 export interface Pattern {
   id: string;
-  steps: (number | null)[]; // MIDI offsets from root, or null for rest
-  velocity: number[]; // 0-1
-  offsets?: number[]; // -0.5 to 0.5 representing percentage of a 16th note shift
+  steps: (number | null)[]; 
+  velocity: number[]; 
+  offsets?: number[]; 
   generation: number;
   parent?: string;
-  score?: number; // Fitness score for evolutionary selection
+  score?: number; 
 }
 
 export interface Note {
@@ -64,8 +65,6 @@ export interface LogEntry {
 
 export type Scale = number[];
 
-// --- NEW ADVANCED TYPES ---
-
 export type SynthesisType = 'SUBTRACTIVE' | 'FM';
 
 export interface SynthPatch {
@@ -77,23 +76,47 @@ export interface SynthPatch {
   release: number;
   detuneAmount: number;
   fmDepth: number;
-  harmonicRatio: number; // FM: Modulator freq multiplier
+  harmonicRatio: number; 
   filterType: BiquadFilterType;
 }
 
 export interface ChordProgression {
-  rootOffsets: number[]; // e.g., [0, -2, 5, 7] relative to key center
-  barLength: number; // How many bars per chord
+  rootOffsets: number[]; 
+  barLength: number; 
 }
 
 export interface EvolutionLocks {
-  melody: boolean;    // If true, pattern steps/velocity won't change
-  timbre: boolean;    // If true, synth patch (ADSR, Wave) won't change
-  harmony: boolean;   // If true, chord progression/key won't change
-  rhythm: boolean;    // If true, drum patterns won't change
+  melody: boolean;    
+  timbre: boolean;    
+  harmony: boolean;   
+  rhythm: boolean;    
 }
 
 export interface EvolutionState {
-  isAuto: boolean;       // Master Auto-Evolve Switch
-  locks: EvolutionLocks; // Granular control
+  isAuto: boolean;       
+  locks: EvolutionLocks; 
+}
+
+// --- LIFE ENGINE TYPES ---
+
+export type ParticleType = 'BUILDER' | 'THINKER' | 'FEELER';
+
+export interface Particle {
+  id: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  type: ParticleType;
+  energy: number; // 0-100 (Health)
+  age: number;
+  maxAge: number;
+  connections: string[]; // IDs of connected particles (Mycelium network)
+}
+
+export interface BioStats {
+  population: number;
+  averageEnergy: number;
+  dominantType: ParticleType;
+  synergy: number; // 0-1 How connected the civilization is
 }
