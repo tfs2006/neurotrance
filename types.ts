@@ -45,6 +45,7 @@ export interface Pattern {
   offsets?: number[]; // -0.5 to 0.5 representing percentage of a 16th note shift
   generation: number;
   parent?: string;
+  score?: number; // Fitness score for evolutionary selection
 }
 
 export interface Note {
@@ -65,7 +66,10 @@ export type Scale = number[];
 
 // --- NEW ADVANCED TYPES ---
 
+export type SynthesisType = 'SUBTRACTIVE' | 'FM';
+
 export interface SynthPatch {
+  type: SynthesisType;
   waveform: OscillatorType;
   attack: number;
   decay: number;
@@ -73,10 +77,23 @@ export interface SynthPatch {
   release: number;
   detuneAmount: number;
   fmDepth: number;
+  harmonicRatio: number; // FM: Modulator freq multiplier
   filterType: BiquadFilterType;
 }
 
 export interface ChordProgression {
   rootOffsets: number[]; // e.g., [0, -2, 5, 7] relative to key center
   barLength: number; // How many bars per chord
+}
+
+export interface EvolutionLocks {
+  melody: boolean;    // If true, pattern steps/velocity won't change
+  timbre: boolean;    // If true, synth patch (ADSR, Wave) won't change
+  harmony: boolean;   // If true, chord progression/key won't change
+  rhythm: boolean;    // If true, drum patterns won't change
+}
+
+export interface EvolutionState {
+  isAuto: boolean;       // Master Auto-Evolve Switch
+  locks: EvolutionLocks; // Granular control
 }

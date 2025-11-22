@@ -3,12 +3,24 @@ import { Scale } from './types';
 // Base Frequency for A4
 export const A4 = 440;
 
-// Musical Scales (Intervallic distances in semitones)
+// Musical Scales (Strict Pentatonic - 5 notes per octave)
+// These scales remove dissonant intervals (tritones/semitones) for a smoother, "floating" trance sound.
 export const SCALES: Record<string, Scale> = {
-  MINOR: [0, 2, 3, 5, 7, 8, 10],
-  PHRYGIAN: [0, 1, 3, 5, 7, 8, 10], // Darker, trance-like
-  DORIAN: [0, 2, 3, 5, 7, 9, 10],
-  HARMONIC_MINOR: [0, 2, 3, 5, 7, 8, 11],
+  // Minor Pentatonic (The standard for Deep Trance)
+  // Intervals: Root, b3, 4, 5, b7
+  MINOR: [0, 3, 5, 7, 10],
+
+  // Hirajoshi (Japanese Scale - Dark/Psytrance vibe)
+  // Intervals: Root, 2, b3, 5, b6 (Mapped to closest semitones)
+  PHRYGIAN: [0, 2, 3, 7, 8], 
+
+  // Egyptian / Suspended (Ethereal/Floating vibe)
+  // Intervals: Root, 2, 4, 5, b7
+  DORIAN: [0, 2, 5, 7, 10],
+
+  // "In-Sen" or Exotic Pentatonic (Euphoric/Goa vibe)
+  // A subset of Harmonic Minor
+  HARMONIC_MINOR: [0, 1, 5, 7, 8],
 };
 
 // Helper to get frequency from MIDI note number

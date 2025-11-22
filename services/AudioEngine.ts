@@ -1,5 +1,5 @@
 import { SCALES, midiToFreq, midiToNoteName, ROOT_NOTES, BASE_TEMPO, SCHEDULE_AHEAD_TIME, LOOKAHEAD } from '../constants';
-import { Mood, ArpMode, LogEntry, Pattern, MacroPhase, DrumKit, SynthPatch, ChordProgression } from '../types';
+import { Mood, ArpMode, LogEntry, Pattern, MacroPhase, DrumKit, SynthPatch, ChordProgression, SynthesisType, EvolutionLocks } from '../types';
 
 export class AudioEngine {
   private ctx: AudioContext | null = null;
@@ -45,16 +45,27 @@ export class AudioEngine {
   private masterVolume: number = 0.6;
   private reverbEnabled: boolean = true;
 
+  // Evolution Logic Control
+  private isAutoEvolve: boolean = true;
+  private locks: EvolutionLocks = {
+    melody: false,
+    timbre: false,
+    harmony: false,
+    rhythm: false
+  };
+
   // Advanced Evolution (GA) & Song Structure
   private currentPattern: Pattern | null = null;
   private counterPattern: Pattern | null = null;
   private patternHistory: Pattern[] = [];
+  private elitePatterns: Pattern[] = []; // "Hall of Fame" for learning
   private currentGeneration: number = 0;
   private macroPhase: MacroPhase = MacroPhase.DRIFT;
   private phaseTimer: number = 0; 
 
-  // NEW: Deep Evolution State
+  // Deep Evolution State
   private currentPatch: SynthPatch = {
+    type: 'SUBTRACTIVE',
     waveform: 'sawtooth',
     attack: 0.01,
     decay: 0.2,
@@ -62,6 +73,7 @@ export class AudioEngine {
     release: 0.1,
     detuneAmount: 10,
     fmDepth: 0,
+    harmonicRatio: 2,
     filterType: 'lowpass'
   };
 
@@ -81,9 +93,9 @@ export class AudioEngine {
   private onSchedulerTick: ((step: number, meta: string) => void) | null = null;
   private onLog: ((entry: LogEntry) => void) | null = null;
   private onPatternUpdate: ((pattern: Pattern) => void) | null = null;
+  private onPatchUpdate: ((patch: SynthPatch) => void) | null = null;
 
   constructor() {
-    // Lazy initialization is handled in start()
     this.generateEuclideanRhythms();
   }
 
@@ -97,7 +109,6 @@ export class AudioEngine {
 
     this.log('info', 'Initializing AudioContext...');
 
-    // Unlocking Audio for iOS/Safari
     try {
         const buffer = this.ctx.createBuffer(1, 1, 22050);
         const source = this.ctx.createBufferSource();
@@ -123,12 +134,11 @@ export class AudioEngine {
     this.compressor.attack.value = 0.003;
     this.compressor.release.value = 0.25;
 
-    // Recorder Destination
     this.destNode = this.ctx.createMediaStreamDestination();
 
-    // Effects Bus (Simple Delay)
+    // Effects Bus
     this.delayNode = this.ctx.createDelay();
-    this.delayNode.delayTime.value = (60 / this.tempo) * 0.75; // Dotted 8th note delay
+    this.delayNode.delayTime.value = (60 / this.tempo) * 0.75; 
     this.delayFeedback = this.ctx.createGain();
     
     const delayFilter = this.ctx.createBiquadFilter();
@@ -139,15 +149,14 @@ export class AudioEngine {
     this.delayFeedback.connect(delayFilter);
     delayFilter.connect(this.delayNode);
 
-    // Reverb (Algorithmic impulse)
     this.reverbNode = this.ctx.createConvolver();
-    this.reverbNode.buffer = this.createReverbImpulse(2.5); // 2.5s tail
+    this.reverbNode.buffer = this.createReverbImpulse(2.5); 
     this.reverbGain = this.ctx.createGain();
     this.reverbGain.gain.value = 1;
 
-    // Modulation Matrix Initialization
+    // LFOs
     this.lfo1 = this.ctx.createOscillator();
-    this.lfo1.frequency.value = 0.1; // Slow drift
+    this.lfo1.frequency.value = 0.1; 
     this.lfo1Gain = this.ctx.createGain();
     this.lfo1Gain.gain.value = 1; 
     this.lfo1.connect(this.lfo1Gain);
@@ -161,7 +170,7 @@ export class AudioEngine {
     this.lfo2.connect(this.lfo2Gain);
     this.lfo2.start();
 
-    // Connections
+    // Routing
     this.masterGain.connect(this.compressor);
     this.compressor.connect(this.analyser);
     this.analyser.connect(this.ctx.destination);
@@ -171,15 +180,67 @@ export class AudioEngine {
     this.reverbNode.connect(this.reverbGain);
     this.reverbGain.connect(this.masterGain);
 
-    this.log('info', 'DSP Chain Constructed: Comp -> Delay -> Reverb -> ModMatrix');
+    this.log('info', 'DSP Chain Constructed');
 
-    // Initialize first pattern and structure
-    this.regenerateSongStructure();
-    this.evolvePattern();
+    // Initialize
+    this.regenerateSongStructure(true); // force
+    this.evolvePattern(true); // force
     this.setMood(this.currentMood);
   }
 
-  // --- ADVANCED ALGORITHMIC HELPERS ---
+  // --- MANUAL CONTROLS ---
+
+  public togglePatternStep(index: number) {
+      if (!this.currentPattern) return;
+      
+      const current = this.currentPattern.steps[index];
+      if (current === null) {
+          this.currentPattern.steps[index] = 0; // Root
+          this.currentPattern.velocity[index] = 0.8;
+      } else if (current === 0) {
+          const degree = Math.floor(Math.random() * this.currentScale.length);
+          this.currentPattern.steps[index] = this.currentScale[degree];
+      } else {
+          this.currentPattern.steps[index] = null;
+          this.currentPattern.velocity[index] = 0;
+      }
+      
+      if (this.onPatternUpdate) this.onPatternUpdate(this.currentPattern);
+      if (this.isAutoEvolve) {
+          this.locks.melody = true;
+          this.log('info', 'User Edit: Melody Locked');
+      }
+  }
+
+  public setPatchParam<K extends keyof SynthPatch>(param: K, value: SynthPatch[K]) {
+      this.currentPatch[param] = value;
+      if (this.onPatchUpdate) this.onPatchUpdate(this.currentPatch);
+      if (this.isAutoEvolve) {
+          this.locks.timbre = true;
+      }
+  }
+
+  public setEvolutionState(isAuto: boolean, locks: EvolutionLocks) {
+      this.isAutoEvolve = isAuto;
+      this.locks = locks;
+      this.log('event', `MODE: ${isAuto ? 'AUTO-EVOLVE' : 'MANUAL_ARCHITECT'}`);
+  }
+
+  public manualMutate(target: 'melody' | 'timbre' | 'rhythm') {
+      switch(target) {
+          case 'melody': 
+            this.evolvePattern(true); 
+            break;
+          case 'timbre': 
+            this.regenerateSongStructure(false, true); 
+            break;
+          case 'rhythm':
+            this.generateEuclideanRhythms();
+            break;
+      }
+  }
+
+  // --- ALGORITHMIC CORE ---
 
   private getEuclideanPattern(steps: number, pulses: number): boolean[] {
     const pattern: boolean[] = [];
@@ -198,6 +259,8 @@ export class AudioEngine {
   }
 
   private generateEuclideanRhythms() {
+      if (this.locks.rhythm && this.hiHatPattern.length > 0) return;
+
       const hatHits = 4 + Math.floor(Math.random() * 8);
       this.hiHatPattern = this.getEuclideanPattern(16, hatHits);
       const percHits = 2 + Math.floor(Math.random() * 4);
@@ -205,39 +268,49 @@ export class AudioEngine {
       this.log('event', `RHYTHM_GEN >> Hat:${hatHits}/16 Perc:${percHits}/16`);
   }
 
-  private regenerateSongStructure() {
-      const idx = Math.floor(Math.random() * ROOT_NOTES.length);
-      this.rootNote = ROOT_NOTES[idx];
+  private regenerateSongStructure(force: boolean = false, timbreOnly: boolean = false) {
+      if (!force && !this.isAutoEvolve) return;
 
-      const validDegrees = [0, 0, -2, 3, 5, 7, 8, 10];
-      const progLength = 4;
-      const newOffsets = [];
-      for(let i=0; i<progLength; i++) {
-          if (i===0) newOffsets.push(0);
-          else newOffsets.push(validDegrees[Math.floor(Math.random() * validDegrees.length)]);
+      if (!this.locks.harmony && !timbreOnly) {
+        const idx = Math.floor(Math.random() * ROOT_NOTES.length);
+        this.rootNote = ROOT_NOTES[idx];
+        this.currentChordRoot = this.rootNote;
+
+        const pentatonicIntervals = [0, 0, 3, 5, 7, 10, -2, -5]; 
+        const progLength = 4;
+        const newOffsets = [];
+        for(let i=0; i<progLength; i++) {
+            if (i===0) newOffsets.push(0);
+            else newOffsets.push(pentatonicIntervals[Math.floor(Math.random() * pentatonicIntervals.length)]);
+        }
+        
+        this.currentProgression = { rootOffsets: newOffsets, barLength: 4 };
+      }
+
+      if (!this.locks.timbre || timbreOnly) {
+        const waves: OscillatorType[] = ['sawtooth', 'square', 'triangle', 'sawtooth'];
+        const synthType: SynthesisType = Math.random() > 0.6 ? 'FM' : 'SUBTRACTIVE';
+        
+        this.currentPatch = {
+            type: synthType,
+            waveform: waves[Math.floor(Math.random() * waves.length)],
+            attack: 0.005 + Math.random() * 0.05,
+            decay: 0.1 + Math.random() * 0.3,
+            sustain: Math.random() * 0.4,
+            release: 0.1 + Math.random() * 0.5,
+            detuneAmount: 5 + Math.random() * 20,
+            fmDepth: 200 + Math.random() * 800,
+            harmonicRatio: [0.5, 1, 2, 3, 4, 1.5][Math.floor(Math.random() * 6)],
+            filterType: Math.random() > 0.9 ? 'bandpass' : 'lowpass'
+        };
+        if (this.onPatchUpdate) this.onPatchUpdate(this.currentPatch);
+      }
+
+      if (!this.locks.rhythm) {
+         this.generateEuclideanRhythms();
       }
       
-      this.currentProgression = {
-          rootOffsets: newOffsets,
-          barLength: 4
-      };
-
-      this.currentChordRoot = this.rootNote;
-
-      const waves: OscillatorType[] = ['sawtooth', 'square', 'triangle', 'sawtooth'];
-      this.currentPatch = {
-          waveform: waves[Math.floor(Math.random() * waves.length)],
-          attack: 0.005 + Math.random() * 0.05,
-          decay: 0.1 + Math.random() * 0.3,
-          sustain: Math.random() * 0.4,
-          release: 0.1 + Math.random() * 0.5,
-          detuneAmount: 5 + Math.random() * 20,
-          fmDepth: Math.random() > 0.7 ? Math.random() * 500 : 0,
-          filterType: Math.random() > 0.9 ? 'bandpass' : 'lowpass'
-      };
-
-      this.generateEuclideanRhythms();
-      this.log('event', `NEW_SONG_GENERATED >> Key:${midiToNoteName(this.rootNote)} | Wave:${this.currentPatch.waveform}`);
+      this.log('event', `SONG_GENERATE >> ${timbreOnly ? 'Timbre Mutation' : 'Full Structure'}`);
   }
 
   private connectModMatrix(targetParam: AudioParam, source: 'LFO1' | 'LFO2', depth: number) {
@@ -252,6 +325,7 @@ export class AudioEngine {
   public setCallback(cb: (step: number, meta: string) => void) { this.onSchedulerTick = cb; }
   public setLogCallback(cb: (entry: LogEntry) => void) { this.onLog = cb; }
   public setPatternCallback(cb: (pattern: Pattern) => void) { this.onPatternUpdate = cb; }
+  public setPatchCallback(cb: (patch: SynthPatch) => void) { this.onPatchUpdate = cb; }
 
   private log(type: 'info' | 'exec' | 'event', message: string) {
     if (this.onLog) {
@@ -262,6 +336,7 @@ export class AudioEngine {
   public getAnalyser(): AnalyserNode | null { return this.analyser; }
   public getCurrentScale(): number[] { return this.currentScale; }
   public getRootNote(): number { return this.currentChordRoot; }
+  public getCurrentPatch(): SynthPatch { return this.currentPatch; }
 
   public start() {
     if (this.isPlaying) return;
@@ -316,6 +391,8 @@ export class AudioEngine {
   public setDrumKit(kit: DrumKit) { this.currentDrumKit = kit; this.log('event', `KIT_SELECT >> ${kit}`); }
   public setArpMode(mode: ArpMode) { this.arpMode = mode; this.log('event', `ARP_MODE >> ${mode}`); }
   public updateParams(cutoffNorm: number, resonanceNorm: number) { this.filterCutoff = 100 + (cutoffNorm * 11900); this.resonance = resonanceNorm * 20; }
+  public setSynthesisType(type: SynthesisType) { this.currentPatch.type = type; this.log('event', `ENGINE_MODE >> ${type}`); }
+  public setFMRatio(ratio: number) { this.currentPatch.harmonicRatio = ratio; }
   public forcePhase(phase: MacroPhase) { 
       this.macroPhase = phase; 
       this.phaseTimer = 0; 
@@ -333,9 +410,37 @@ export class AudioEngine {
     }
   }
 
-  // ----------------------------------------------------------------
-  // GENETIC ALGORITHM & PATTERNS
-  // ----------------------------------------------------------------
+  // --- GENETIC ALGORITHM & PATTERNS ---
+
+  private calculateFitness(pattern: Pattern): number {
+    let score = 0;
+    let noteCount = 0;
+    let lastNoteVal = -100;
+    
+    pattern.steps.forEach((val, idx) => {
+        if (val !== null) {
+            noteCount++;
+            if (idx % 4 === 0) {
+                if (val === 0 || val === 7 || val === 12) score += 10; 
+                else if (val === 3 || val === 4 || val === 5) score += 5; 
+            }
+            if (lastNoteVal !== -100) {
+                const interval = Math.abs(val - lastNoteVal);
+                if (interval <= 4) score += 5; 
+                else if (interval > 7 && interval !== 12) score -= 5; 
+            }
+            lastNoteVal = val;
+        }
+    });
+
+    const density = noteCount / 16;
+    if (density > 0.25 && density < 0.75) score += 20;
+    else score -= 10;
+
+    if (pattern.steps[2] !== null || pattern.steps[10] !== null) score += 5;
+
+    return Math.max(0, score);
+  }
 
   private createRandomPattern(length: number = 16): Pattern {
     const steps: (number | null)[] = [];
@@ -349,7 +454,7 @@ export class AudioEngine {
             velocity.push(0.5 + Math.random() * 0.5);
         } else { steps.push(null); velocity.push(0); }
     }
-    return { id: Math.random().toString(36).substr(2, 5), steps, velocity, offsets, generation: 0 };
+    return { id: Math.random().toString(36).substr(2, 5), steps, velocity, offsets, generation: 0, score: 0 };
   }
 
   private generateCounterPattern(mainPattern: Pattern): Pattern {
@@ -370,7 +475,7 @@ export class AudioEngine {
                  if (currentIdx !== -1) noteVal = this.currentScale[(currentIdx + interval) % this.currentScale.length];
                  else noteVal = mainNote + 4; 
             } else {
-                const degrees = [0, 2, 4, 6]; 
+                const degrees = [0, 2, 4, 1]; 
                 const d = degrees[Math.floor(Math.random() * degrees.length)];
                 noteVal = this.currentScale[d % this.currentScale.length];
             }
@@ -381,14 +486,30 @@ export class AudioEngine {
     return { id: "CNTR_" + mainPattern.id.substring(0,3), steps, velocity, offsets, generation: mainPattern.generation };
   }
 
-  private evolvePattern() {
+  private evolvePattern(force: boolean = false) {
+      if (this.locks.melody && !force) return;
+      if (!this.isAutoEvolve && !force) return;
+
       if (!this.currentPattern) {
           this.currentPattern = this.createRandomPattern();
           this.counterPattern = this.generateCounterPattern(this.currentPattern);
-          this.log('event', `GENESIS >> Created Gen 0 Pattern ${this.currentPattern.id}`);
+          this.log('event', `GENESIS >> Created Gen 0 Pattern`);
           if (this.onPatternUpdate) this.onPatternUpdate(this.currentPattern);
           return;
       }
+
+      const currentScore = this.calculateFitness(this.currentPattern);
+      this.currentPattern.score = currentScore;
+      
+      if (currentScore > 50) {
+          const isDuplicate = this.elitePatterns.some(p => p.id === this.currentPattern?.id);
+          if (!isDuplicate) {
+              this.elitePatterns.push(this.currentPattern);
+              this.elitePatterns.sort((a, b) => (b.score || 0) - (a.score || 0));
+              if (this.elitePatterns.length > 10) this.elitePatterns.pop();
+          }
+      }
+
       this.patternHistory.push(this.currentPattern);
       if (this.patternHistory.length > 5) this.patternHistory.shift();
       this.currentGeneration++;
@@ -403,7 +524,15 @@ export class AudioEngine {
       let parentId = this.currentPattern.id;
       let action = "MUTATION";
 
-      if (mutationType > 0.7 && this.patternHistory.length >= 2 && !isMassExtinction) {
+      if (this.elitePatterns.length > 0 && Math.random() < 0.3 && !isMassExtinction) {
+          action = "LEARNING_CROSSOVER";
+          const partner = this.elitePatterns[Math.floor(Math.random() * this.elitePatterns.length)];
+          parentId = `${this.currentPattern.id} x ${partner.id}`;
+          const split = Math.floor(newSteps.length / 2);
+          newSteps = [...this.currentPattern.steps.slice(0, split), ...partner.steps.slice(split)];
+          newVel = [...this.currentPattern.velocity.slice(0, split), ...partner.velocity.slice(split)];
+      } 
+      else if (Math.random() > 0.7 && this.patternHistory.length >= 2 && !isMassExtinction) {
           action = "CROSSOVER";
           const partner = this.patternHistory[Math.floor(Math.random() * (this.patternHistory.length - 1))];
           parentId = `${this.currentPattern.id} x ${partner.id}`;
@@ -422,19 +551,15 @@ export class AudioEngine {
               const hasNote = newSteps[idx] !== null;
               if (hasNote) {
                   if (Math.random() < (isMassExtinction ? 0.5 : 0.8)) {
-                      const currentDegreeIndex = this.currentScale.indexOf(newSteps[idx] as number);
+                      const currentVal = newSteps[idx] as number;
+                      const currentDegreeIndex = this.currentScale.indexOf(currentVal);
                       let newDegree;
-                      const rand = Math.random();
-                      if (currentDegreeIndex !== -1 && rand > 0.5) {
+                      if (currentDegreeIndex !== -1 && Math.random() > 0.4) {
                           const direction = Math.random() > 0.5 ? 1 : -1;
                           newDegree = this.currentScale[(currentDegreeIndex + direction + this.currentScale.length) % this.currentScale.length];
-                      } else if (rand > 0.2) {
+                      } else {
                           const scaleDegree = Math.floor(Math.random() * this.currentScale.length);
                           newDegree = this.currentScale[scaleDegree];
-                      } else {
-                         const stableDegrees = [0, 2, 4]; 
-                         const deg = stableDegrees[Math.floor(Math.random() * stableDegrees.length)];
-                         newDegree = this.currentScale[deg % this.currentScale.length];
                       }
                       newSteps[idx] = newDegree;
                       newVel[idx] = 0.5 + Math.random() * 0.5; 
@@ -456,7 +581,7 @@ export class AudioEngine {
           }
       }
 
-      this.currentPattern = { id: Math.random().toString(36).substr(2, 5), steps: newSteps, velocity: newVel, offsets: newOffsets, generation: this.currentGeneration, parent: parentId };
+      this.currentPattern = { id: Math.random().toString(36).substr(2, 5), steps: newSteps, velocity: newVel, offsets: newOffsets, generation: this.currentGeneration, parent: parentId, score: 0 };
       this.counterPattern = this.generateCounterPattern(this.currentPattern);
       this.log('event', `EVOLUTION >> ${action} (Gen ${this.currentGeneration})`);
       if (this.onPatternUpdate) this.onPatternUpdate(this.currentPattern);
@@ -490,7 +615,7 @@ export class AudioEngine {
       this.phaseTimer++;
       const phaseLengths = { [MacroPhase.DRIFT]: 8, [MacroPhase.BUILD]: 8, [MacroPhase.PEAK]: 16, [MacroPhase.COMEDOWN]: 8 };
       
-      if (this.phaseTimer >= phaseLengths[this.macroPhase]) {
+      if (this.phaseTimer >= phaseLengths[this.macroPhase] && this.isAutoEvolve) {
           this.transitionPhase();
       }
 
@@ -562,7 +687,7 @@ export class AudioEngine {
     const isKickStep = beatNumber % 4 === 0;
     if (!isKickStep && this.macroPhase !== MacroPhase.DRIFT) this.playBass(time, beatNumber);
 
-    // 5. PATTERN LEAD
+    // 5. PATTERN LEAD (Main or FM)
     if (this.currentPattern) this.playPatternStep(time, beatNumber);
 
     // 6. COUNTERPOINT
@@ -661,30 +786,34 @@ export class AudioEngine {
 
   private playCrash(time: number) {
     if (!this.ctx) return;
-    const bufferSize = this.ctx.sampleRate * 2; 
+    const bufferSize = this.ctx.sampleRate * 2.0;
     const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
     const data = buffer.getChannelData(0);
-    for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+    for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1);
 
     const noise = this.ctx.createBufferSource();
     noise.buffer = buffer;
+
     const filter = this.ctx.createBiquadFilter();
     filter.type = 'highpass';
-    filter.frequency.value = 4000;
-    
+    filter.frequency.value = 3000;
+
     const gain = this.ctx.createGain();
-    gain.gain.setValueAtTime(0.5, time);
-    gain.gain.exponentialRampToValueAtTime(0.01, time + 1.5);
+    gain.gain.setValueAtTime(0.6, time);
+    gain.gain.exponentialRampToValueAtTime(0.01, time + 2.0);
 
     noise.connect(filter); filter.connect(gain); gain.connect(this.masterGain!);
     if (this.reverbEnabled && this.reverbGain) gain.connect(this.reverbGain);
+    
     noise.start(time);
   }
 
   private playBass(time: number, step: number) {
     if (!this.ctx) return;
     const osc = this.ctx.createOscillator();
-    osc.type = this.currentPatch.waveform; 
+    // Bass usually stays cleaner, but we can use current waveform if not too crazy
+    osc.type = this.currentPatch.type === 'FM' ? 'sine' : this.currentPatch.waveform; 
+    
     let octaveOffset = -12; 
     if (this.macroPhase === MacroPhase.PEAK) {
         if (step % 4 === 3 && Math.random() > 0.3) octaveOffset = 0;
@@ -725,7 +854,14 @@ export class AudioEngine {
   private playPad(time: number) {
       if (!this.ctx || this.macroPhase === MacroPhase.PEAK) return; 
 
-      const degrees = [0, 2, 4, 6];
+      // If FM is active, use FM Pad
+      if (this.currentPatch.type === 'FM') {
+          this.playFMPad(time);
+          return;
+      }
+
+      // SUBTRACTIVE PAD
+      const degrees = [0, 2, 4, 1]; // Pentatonic indices
       const oscs: OscillatorNode[] = [];
       const gain = this.ctx.createGain();
       const attack = 2.0;
@@ -762,12 +898,57 @@ export class AudioEngine {
       if (this.reverbEnabled && this.reverbGain) panner.connect(this.reverbGain);
   }
 
+  private playFMPad(time: number) {
+      if (!this.ctx) return;
+      const degrees = [0, 2, 4]; // Fewer notes for FM clarity
+      const gain = this.ctx.createGain();
+      const attack = 1.5;
+      const duration = (60 / this.tempo) * 4 * 4;
+
+      gain.gain.setValueAtTime(0, time);
+      gain.gain.linearRampToValueAtTime(0.12, time + attack);
+      gain.gain.exponentialRampToValueAtTime(0.001, time + duration - 0.1);
+
+      const panner = this.ctx.createStereoPanner();
+      this.connectModMatrix(panner.pan, 'LFO1', 0.4);
+      
+      degrees.forEach((d) => {
+          const note = this.currentChordRoot + this.currentScale[d % this.currentScale.length];
+          const freq = midiToFreq(note);
+          
+          const carrier = this.ctx!.createOscillator();
+          carrier.type = 'sine';
+          carrier.frequency.value = freq;
+          
+          const modulator = this.ctx!.createOscillator();
+          modulator.type = 'sine';
+          modulator.frequency.value = freq * (this.currentPatch.harmonicRatio || 1);
+          
+          const modGain = this.ctx!.createGain();
+          // Slow FM index evolution
+          modGain.gain.setValueAtTime(100, time);
+          modGain.gain.linearRampToValueAtTime(this.currentPatch.fmDepth * 0.5, time + attack);
+          modGain.gain.linearRampToValueAtTime(100, time + duration);
+          
+          modulator.connect(modGain);
+          modGain.connect(carrier.frequency);
+          carrier.connect(gain);
+          
+          carrier.start(time); carrier.stop(time + duration);
+          modulator.start(time); modulator.stop(time + duration);
+      });
+
+      gain.connect(panner); panner.connect(this.masterGain!);
+      if (this.reverbEnabled && this.reverbGain) panner.connect(this.reverbGain);
+  }
+
   private playPluckStep(time: number, step: number) {
       if (!this.ctx || !this.counterPattern) return;
       const noteOffset = this.counterPattern.steps[step];
       const vel = this.counterPattern.velocity[step];
       if (noteOffset === null || vel === 0) return;
 
+      // Pluck is always basic FM for contrast
       const carrier = this.ctx.createOscillator();
       const modulator = this.ctx.createOscillator();
       const modGain = this.ctx.createGain();
@@ -811,44 +992,70 @@ export class AudioEngine {
       const secondsPer16th = (60 / this.tempo) / 4;
       const actualTime = time + (offsetPct * secondsPer16th);
 
-      const osc1 = this.ctx.createOscillator();
-      const osc2 = this.ctx.createOscillator();
-      
-      osc1.type = this.currentPatch.waveform;
-      osc2.type = 'square';
-
       const octave = (this.macroPhase === MacroPhase.PEAK && Math.random() > 0.7) ? 12 : 0;
       const midi = this.currentChordRoot + noteOffset + 12 + octave;
       const freq = midiToFreq(midi);
-
-      osc1.frequency.setValueAtTime(freq, actualTime);
-      osc2.frequency.setValueAtTime(freq + 2, actualTime); 
-      osc2.detune.value = this.currentPatch.detuneAmount;
-
-      const filter = this.ctx.createBiquadFilter();
-      filter.type = this.currentPatch.filterType;
-      filter.Q.value = this.resonance * 3;
-      this.connectModMatrix(filter.frequency, 'LFO1', 100); 
-
-      const cutoff = this.filterCutoff;
-      filter.frequency.setValueAtTime(cutoff, actualTime);
-      filter.frequency.linearRampToValueAtTime(cutoff + 2000, actualTime + this.currentPatch.attack * 5); 
-      filter.frequency.exponentialRampToValueAtTime(cutoff, actualTime + this.currentPatch.decay);
 
       const gain = this.ctx.createGain();
       gain.gain.setValueAtTime(0, actualTime);
       gain.gain.linearRampToValueAtTime(velocity * 0.2, actualTime + this.currentPatch.attack);
       gain.gain.linearRampToValueAtTime(0, actualTime + this.currentPatch.release + 0.2);
-
-      osc1.connect(filter); osc2.connect(filter); filter.connect(gain);
-      gain.connect(this.masterGain!); gain.connect(this.delayNode!);
       
       if (this.reverbEnabled && (this.macroPhase === MacroPhase.DRIFT || this.currentMood === Mood.ETHEREAL)) {
           gain.connect(this.reverbGain!);
       }
+      gain.connect(this.masterGain!); gain.connect(this.delayNode!);
 
-      osc1.start(actualTime); osc1.stop(actualTime + 0.4);
-      osc2.start(actualTime); osc2.stop(actualTime + 0.4);
+      if (this.currentPatch.type === 'FM') {
+          // FM SYNTHESIS
+          const carrier = this.ctx.createOscillator();
+          carrier.type = 'sine'; // FM usually cleaner with sine carrier
+          carrier.frequency.value = freq;
+          
+          const modulator = this.ctx.createOscillator();
+          modulator.type = 'sine'; // Can be varied but sticking to sine/tri for now
+          modulator.frequency.value = freq * (this.currentPatch.harmonicRatio || 2);
+          
+          const modGain = this.ctx.createGain();
+          
+          // FM Envelope (Critical for "pluck" sound)
+          const fmAmt = this.currentPatch.fmDepth;
+          modGain.gain.setValueAtTime(fmAmt, actualTime);
+          modGain.gain.exponentialRampToValueAtTime(1, actualTime + this.currentPatch.decay);
+          
+          modulator.connect(modGain);
+          modGain.connect(carrier.frequency);
+          carrier.connect(gain);
+          
+          carrier.start(actualTime); carrier.stop(actualTime + 0.4);
+          modulator.start(actualTime); modulator.stop(actualTime + 0.4);
+      
+      } else {
+          // SUBTRACTIVE SYNTHESIS
+          const osc1 = this.ctx.createOscillator();
+          const osc2 = this.ctx.createOscillator();
+          
+          osc1.type = this.currentPatch.waveform;
+          osc2.type = 'square';
+
+          osc1.frequency.setValueAtTime(freq, actualTime);
+          osc2.frequency.setValueAtTime(freq + 2, actualTime); 
+          osc2.detune.value = this.currentPatch.detuneAmount;
+
+          const filter = this.ctx.createBiquadFilter();
+          filter.type = this.currentPatch.filterType;
+          filter.Q.value = this.resonance * 3;
+          this.connectModMatrix(filter.frequency, 'LFO1', 100); 
+
+          const cutoff = this.filterCutoff;
+          filter.frequency.setValueAtTime(cutoff, actualTime);
+          filter.frequency.linearRampToValueAtTime(cutoff + 2000, actualTime + this.currentPatch.attack * 5); 
+          filter.frequency.exponentialRampToValueAtTime(cutoff, actualTime + this.currentPatch.decay);
+
+          osc1.connect(filter); osc2.connect(filter); filter.connect(gain);
+          osc1.start(actualTime); osc1.stop(actualTime + 0.4);
+          osc2.start(actualTime); osc2.stop(actualTime + 0.4);
+      }
 
       this.log('exec', `pattern.note(${midiToNoteName(midi)})`);
   }
