@@ -30,13 +30,19 @@ interface ControlPanelProps {
   onManualMutate: (target: 'melody' | 'timbre' | 'rhythm') => void;
   onParamChange: (key: keyof SynthPatch, value: any) => void;
   bioStats: BioStats;
+  // System Props
+  isRecording: boolean;
+  onToggleRecording: () => void;
+  onShare: () => void;
+  onStop: () => void;
 }
 
 export const ControlPanel: React.FC<ControlPanelProps> = ({
   currentMood, setMood, currentArpMode, setArpMode, currentDrumKit, setDrumKit,
   cutoff, setCutoff, resonance, setResonance, tempo, setTempo, volume, setVolume,
   reverbEnabled, setReverbEnabled, onForcePhase, onSetSynthesisType, onSetFMRatio,
-  currentPatch, isAutoEvolve, setIsAutoEvolve, locks, setLocks, onManualMutate, onParamChange, bioStats
+  currentPatch, isAutoEvolve, setIsAutoEvolve, locks, setLocks, onManualMutate, onParamChange, bioStats,
+  isRecording, onToggleRecording, onShare, onStop
 }) => {
   const xyRef = useRef<HTMLDivElement>(null);
   const [isDraggingXY, setIsDraggingXY] = useState(false);
@@ -269,6 +275,25 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                   <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-transform ${reverbEnabled ? 'left-4.5 translate-x-0.5' : 'left-0.5'}`} />
               </button>
           </div>
+
+          {/* SYSTEM IO CONTROLS (Always visible here for tablets/mobile) */}
+          <div className="pt-4 border-t border-gray-800 space-y-2">
+              <label className="text-[10px] text-gray-500 uppercase tracking-wider mb-1 block">System / I.O.</label>
+              <div className="flex gap-2">
+                  <button 
+                      onClick={onToggleRecording}
+                      className={`flex-1 py-2 border rounded text-[9px] font-mono transition-all ${isRecording ? 'border-red-500 bg-red-900/20 text-red-100 animate-pulse' : 'border-gray-700 text-gray-400 hover:border-gray-500'}`}
+                  >
+                      {isRecording ? 'REC [ON]' : 'REC WAV'}
+                  </button>
+                  <button onClick={onShare} className="flex-1 py-2 border border-gray-700 text-gray-400 text-[9px] hover:border-cyan-500 hover:text-cyan-400 rounded transition-colors">
+                      SHARE URL
+                  </button>
+              </div>
+              <button onClick={onStop} className="w-full py-2 border border-red-900/30 text-red-800 hover:text-red-500 hover:border-red-500 rounded text-[9px] transition-colors">
+                  EMERGENCY STOP
+              </button>
+          </div>
       </div>
   );
 
@@ -286,7 +311,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                 <div className="w-12 h-1 bg-cyan-700/50 rounded-full" />
             </div>
             <div className="flex border-b border-cyan-900/50">
-                {[ { id: 'evo', label: 'CIVILIZATION' }, { id: 'patch', label: 'PATCH' }, { id: 'mix', label: 'MIX' } ].map(tab => (
+                {[ { id: 'evo', label: 'CIVILIZATION' }, { id: 'patch', label: 'PATCH' }, { id: 'mix', label: 'MIX / SYS' } ].map(tab => (
                     <button key={tab.id} onClick={() => { setActiveTab(tab.id as any); setIsMobileOpen(true); }} className={`flex-1 py-3 text-xs font-bold tracking-wider transition-colors ${activeTab === tab.id ? 'text-cyan-400 bg-cyan-900/20 border-b-2 border-cyan-400' : 'text-gray-500 hover:text-cyan-200'}`}>
                         {tab.label}
                     </button>

@@ -97,7 +97,9 @@ export class LifeEngine {
     if (counts.FEELER > counts.BUILDER && counts.FEELER > counts.THINKER) domType = 'FEELER';
 
     // Synergy score: Avg connections per particle normalized
-    const synergy = population > 0 ? Math.min(1, (totalConnections / population) / 5) : 0;
+    // Prevent NaN if population is 0
+    const avgConnections = population > 0 ? totalConnections / population : 0;
+    const synergy = Math.min(1, avgConnections / 5);
 
     return {
       population,

@@ -11,8 +11,6 @@ import { BASE_TEMPO, SCALES } from './constants';
 
 const App: React.FC = () => {
   const engineRef = useRef<AudioEngine | null>(null);
-  // Initialize LifeEngine ref lazily or just once. 
-  // useRef(new LifeEngine()) creates garbage on every render, but it's safe logic-wise.
   const lifeEngineRef = useRef<LifeEngine>(new LifeEngine());
   
   const [isPlaying, setIsPlaying] = useState(false);
@@ -283,6 +281,10 @@ const App: React.FC = () => {
                     onManualMutate={handleManualMutate}
                     onParamChange={handlePatchParamChange}
                     bioStats={bioStats}
+                    isRecording={isRecording}
+                    onToggleRecording={toggleRecording}
+                    onShare={handleShare}
+                    onStop={togglePlay}
                 />
                 
                 <div className="hidden lg:flex w-64 h-64 border-l-2 border-cyan-900/30 pl-4 pt-2 flex-col justify-between font-mono text-xs text-cyan-800/80 select-none bg-black/20 backdrop-blur-sm rounded-r-xl">
@@ -326,16 +328,7 @@ const App: React.FC = () => {
 
       {!isZenMode && (
         <div className="absolute bottom-0 left-0 right-0 w-full z-20 flex flex-col items-center gap-2 pb-4 bg-gradient-to-t from-black via-black/80 to-transparent pt-12 pointer-events-auto">
-            {isPlaying && (
-                <div className="md:hidden flex gap-4 mb-4">
-                    <button onClick={toggleRecording} className={`w-12 h-12 rounded-full border flex items-center justify-center ${isRecording ? 'border-red-500 bg-red-900/20' : 'border-gray-700 bg-gray-900'}`}>
-                        <div className={`w-4 h-4 rounded-full ${isRecording ? 'bg-red-500' : 'bg-gray-500'}`} />
-                    </button>
-                    <button onClick={togglePlay} className="w-12 h-12 rounded-full border border-red-900/50 bg-red-900/10 flex items-center justify-center text-red-500 text-xs font-bold">
-                        OFF
-                    </button>
-                </div>
-            )}
+            {/* Removed mobile buttons here since they are now in ControlPanel Mix tab */}
             <div className="flex gap-4 md:gap-6 text-[10px] text-cyan-700 font-mono uppercase tracking-wider items-center">
             <span className="opacity-70">&copy; {new Date().getFullYear()} NeuroSynth</span>
             <span className="text-cyan-900">|</span>
